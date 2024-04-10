@@ -12,30 +12,65 @@ library(geosphere)
 library(tidyr)
 library(tmap)
 
-## ---- Create step object for one individual ----
+## ---- Create step object for all individuals ----
 # read in all shark data
 vps <- readRDS("vps_2020-2021_full.RDS")
 
 # chose one shark and put dataset into format we need - ID, long, lat, and timestamp
-shark2020_20.df <- vps %>% 
-  filter(is.na(temp_c)==F) %>% 
-  dplyr::select(x = "lon",y="lat", t = "DateTimeUTC", id="shark",depth=depth_m,temp="temp_c",depth_bin2m="depth_bin2m") %>% 
-  filter(id=="2020-20")
+alldata <- vps %>% 
+  filter(is.na(temp_c)==F & is.na(depth_m)==F) %>% 
+  dplyr::select(x = "lon",y="lat", t = "DateTimeUTC", id="shark",depth=depth_m,temp="temp_c",depth_bin2m="depth_bin2m")
+
+# there are 10 duplicate moves that need to be removed
+alldata%>%group_by(id,t)%>%summarise(n=n())%>%filter(n > 1)
+# remove the second of each
+alldata<-alldata[-which(alldata$id=="2020-20" & alldata$t==as_datetime("2020-07-21 09:33:35"))[2],]
+alldata<-alldata[-which(alldata$id=="2020-20" & alldata$t==as_datetime("2020-11-10 10:34:57"))[2],]
+alldata<-alldata[-which(alldata$id=="2020-21" & alldata$t==as_datetime("2020-06-19 04:34:36"))[2],]
+alldata<-alldata[-which(alldata$id=="2020-21" & alldata$t==as_datetime("2020-06-19 11:08:09"))[2],]
+alldata<-alldata[-which(alldata$id=="2020-21" & alldata$t==as_datetime("2020-08-18 08:15:29"))[2],]
+alldata<-alldata[-which(alldata$id=="2020-21" & alldata$t==as_datetime("2020-10-13 03:34:36"))[2],]
+alldata<-alldata[-which(alldata$id=="2020-33" & alldata$t==as_datetime("2020-09-11 04:40:54"))[2],]
+alldata<-alldata[-which(alldata$id=="2020-32" & alldata$t==as_datetime("2020-07-17 05:48:09"))[2],]
+alldata<-alldata[-which(alldata$id=="2020-32" & alldata$t==as_datetime("2020-09-21 16:47:53"))[2],]
+alldata<-alldata[-which(alldata$id=="2020-32" & alldata$t==as_datetime("2020-10-03 08:29:50"))[2],]
+
+## Create a dataframe of nested dataframes
+alldata_list<-alldata%>%group_by(id)%>%nest()
 
 # now we are going to make a track from this data, while also adjusting the GPS coordinates (needs to be the same projection as the temperature data which we can play around with) 
-shark2020_20 <- amt::make_track(shark2020_20.df,.x=x, .y=y, .t=t, depth_bin2m=depth_bin2m,depth=depth,crs = 4326) 
+alldata_list<-alldata_list%>%mutate(trk=lapply(data, function(d){
+  amt::make_track(d,.x=x, .y=y, .t=t, depth_bin2m=depth_bin2m,depth=depth, crs=4326)
+}))
 
-summarize_sampling_rate(shark2020_20)
-# minimum time between points is 0mins, max is 2869mins. Median is ~1.6mins
+# look at the sampling resolution
+print(alldata_list%>%mutate(sr=lapply(trk,summarize_sampling_rate))%>% dplyr::select(id,sr)%>%unnest(cols=c(sr)),n=22)
 
 # Resample at the selected resolution
-stps<-amt::track_resample(shark2020_20, rate = minutes(20),tolerance = seconds(60)) %>%
-  filter_min_n_burst(min_n=3) %>%# min 3 required for turning angles
-  steps_by_burst() 
+dat1<-alldata_list%>%mutate(dat_clean=map(trk, ~ {
+  .x %>% track_resample(rate = minutes(20), tolerance = seconds(120))
+}))
+
+# Explore the number of movements I have per individual
+print(dat1%>% dplyr::select(id,data)%>%unnest(cols=c(data))%>%group_by(id)%>%summarise(mindepth=min(depth),maxdepth=max(depth)),n=21)
 
 # Now we are going to sample the potential moves an individual could make. Sample ~300
-obs_avail <- random_steps(stps, n_control = 300)
+set.seed(15)
+dat_ssf <- dat1%>%
+  mutate(stps = map(dat_clean, ~ .x %>% amt::filter_min_n_burst(min_n=3) %>%amt::steps_by_burst()%>% random_steps(n_control = 300) ))
 
+dat_ssf$stps
+
+# run shark 2021-26 on its own and figure out why fitdistr isnt working for it! 
+# It is the Spatial Projection that is causing the issue :( ... transform coords is necessary for some of these sharks...
+
+
+shark26<-dat1%>%filter(id=="2021-26")
+
+View(as.data.frame(shark26$dat_clean)%>%group_by(x_,y_)%>%summarise(n=n())%>%filter(n > 1))
+
+
+as.data.frame(shark26$dat_clean)%>%filter(x_==-119.5653&y_==34.41311)
 # now for obs avaliable we want to join the water temperature and depth.
 
 ## ---- Add polygon ID to the shark dataset ----
