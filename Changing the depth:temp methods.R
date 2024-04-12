@@ -102,14 +102,12 @@ rp <- rasterize(polygon, r, 'ID')
 plot(rp)
 
 # extract the polygonID for each movement
-ssf<-extract_covariates(obs_avail,rp)
-
-#remove moves outside of our array
-ssf_filt<-ssf%>%dplyr::filter(is.na(ssf$layer)==F)
-
-# how many random moves per move am I left with? 
-sum_ssf<-as.data.frame(ssf_filt)%>%filter(case_==FALSE)%>%group_by(step_id_)%>%count()
-range(sum_ssf$n) 
+for(i in 1:21){
+  print(i)
+  dat_ssf2$rando[[i]]<-extract_covariates(dat_ssf2$rando[[i]],rp)
+  #remove moves outside of our array
+  dat_ssf2$rando[[i]]<-dat_ssf2$rando[[i]]%>%dplyr::filter(is.na(dat_ssf2$rando[[i]]$layer)==F)
+}
 
 ## ---- Now add depth to true and simulated movement ----
 
@@ -119,6 +117,10 @@ temp<-readRDS("available_temp_2020-2021_clean.RDS")
 Polygon_depth<-temp%>%group_by(PolygonID_250m)%>%summarise(MaxDepth=mean(Total_Water_Colum_m))
 
 # Combine total water column depth with all moves
+for(l in 1:21){
+  dat_ssf$ssf_totaldepth[[l]]<-left_join(dat_ssf$stps[[l]],dateindex,by=c("t2_h"="DateTimeUTC"))
+}
+
 ssf_totaldepth<-left_join(ssf_filt,Polygon_depth,by=c("layer"="PolygonID_250m"))
 
 # get depth of all movements
