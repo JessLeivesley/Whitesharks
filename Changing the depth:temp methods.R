@@ -11,6 +11,7 @@ library(dplyr)
 library(geosphere)
 library(tidyr)
 library(tmap)
+library(nplyr)
 
 ## ---- Create step object for all individuals ----
 # read in all shark data
@@ -55,23 +56,36 @@ dat1<-alldata_list%>%mutate(dat_clean=map(trk, ~ {
 print(dat1%>% dplyr::select(id,data)%>%unnest(cols=c(data))%>%group_by(id)%>%summarise(mindepth=min(depth),maxdepth=max(depth)),n=21)
 
 # Now we are going to sample the potential moves an individual could make. Sample ~300
-set.seed(15)
-dat_ssf <- dat1%>%
-  mutate(stps = map(dat_clean, ~ .x %>% amt::filter_min_n_burst(min_n=3) %>%amt::steps_by_burst()%>% random_steps(n_control = 300) ))
+dat_ssf <- dat1 %>%
+  mutate(
+    stps = map(dat_clean, ~ .x %>%
+                 amt::filter_min_n_burst(min_n = 3) %>%
+                 amt::steps_by_burst()))
 
-dat_ssf$stps
+# Shark 2021-20 only has 9 points. 
+dat_ssf<-dat_ssf[1:21,]
 
-# run shark 2021-26 on its own and figure out why fitdistr isnt working for it! 
-# It is the Spatial Projection that is causing the issue :( ... transform coords is necessary for some of these sharks...
+dat_ssf <- dat_ssf %>%
+  mutate(
+    stps = map(stps, ~ mutate(.x, sl_ = replace(sl_, sl_ == 0, 1e-5)))
+  )
 
+dat_ssf2 <- dat_ssf %>%
+  mutate(dist = map(stps, ~fitdist((.x$sl_), "gamma")))
 
-shark26<-dat1%>%filter(id=="2021-26")
+set.seed(123)
+for(i in 1:21){
+  print(i)
+  
+  dat_ssf2$rando[[i]]<-random_steps(dat_ssf2$stps[[i]],
+                                    n_control = 300,
+                                    sl_distr=fitdist(dat_ssf2$stps[[i]]$sl_,"gamma"),
+                                    rand_sl = rgamma(n = 1e05,
+                                                     shape = dat_ssf2$dist[[i]]$estimate[1],
+                                                     rate = dat_ssf2$dist[[i]]$estimate[2]))
+ 
+}
 
-View(as.data.frame(shark26$dat_clean)%>%group_by(x_,y_)%>%summarise(n=n())%>%filter(n > 1))
-
-
-as.data.frame(shark26$dat_clean)%>%filter(x_==-119.5653&y_==34.41311)
-# now for obs avaliable we want to join the water temperature and depth.
 
 ## ---- Add polygon ID to the shark dataset ----
 # this allows us to add temperature at the selected resolution
