@@ -192,7 +192,7 @@ as.data.frame(ssf_data)%>%filter(case_==FALSE)%>%group_by(id,step_id)%>%count()
 ssf_data<-as.data.frame(ssf_data)%>%group_by(step_id)%>%dplyr::filter(row_number()<21)%>%ungroup()
 
 # ---- Add in distance to shore ----
-`# Read in shoreline shapefile
+# Read in shoreline shapefile
 ca = read_sf("Shoreline/Shoreline.shp")
 
 # Cast the spatial lines into a multi-linestring and sample
@@ -240,7 +240,7 @@ ssf_data$lat<-ssf_data$y2_
 
 # run this - but takes a LONG TIME 
 ssf_data$dist_to_shore_<-shark_shore_dist(ssf_data)
-`
+
 # ---- Create season variable ----
 
 # first use summarised data to distinguish when thermocline is present
@@ -318,6 +318,7 @@ parameters {
   vector[2] beta_three;
   vector[2] beta_sl;
   vector[2] beta_ta;
+  real pop_int;
   vector<lower=0>[9] sigma;
   vector[I] a_re; // RE for steps
   vector[J] i_re1; // RE effects for each individual (temp)
@@ -336,7 +337,7 @@ model {
   
   // priors
   sigma ~ normal(0, 1);
-  a_re ~ normal(0, 1000); // The paper has this as a_re ~ normal(0, 1000000)
+  a_re ~ normal(0, 2); // The paper has this as a_re ~ normal(0, 1000000)
   i_re1 ~ normal(0, sqrt(sigma[1]));
   i_re2 ~ normal(0, sqrt(sigma[2]));
   i_re3 ~ normal(0, sqrt(sigma[3]));
@@ -355,9 +356,10 @@ model {
   beta_three ~ normal(0,2);
   beta_sl ~ normal(0,2);
   beta_ta ~ normal(0,2);
+  pop_int ~ normal(0,5);
 
   //likelihood
-  mu = a_re[stepid]+
+  mu = pop_int + a_re[stepid]+
     (beta_temp[season] + i_re1[indid])  .* X[,1] + //temp effect 
     (beta_depth[season] + i_re2[indid]) .* X[,2] + // depth effect
     (beta_dist[season] + i_re3[indid]) .* X[,3] + // distance to shore effect
@@ -393,13 +395,32 @@ stan_dat <- list(N = nrow(ssf_dataset),
 
 
 # Run the model, (this is SLOW, multiple days)
-mod1<-stan(model_code = model,data=stan_dat,warmup=1000,iter=5000,chains=4,cores = 4,init_r = 0.1,pars=c("beta_temp","beta_depth","beta_dist","beta_temp_dist","beta_depth_dist","beta_temp_depth","beta_three","beta_sl","beta_ta","sigma","a_re"))
+tic()
+mod1<-stan(model_code = model,data=stan_dat,warmup=500,iter=1000,chains=4,cores = 4,init_r = 0.1,pars=c("beta_temp","beta_depth","beta_dist","beta_temp_dist","beta_depth_dist","beta_temp_depth","beta_three","beta_sl","beta_ta","sigma","pop_int"))
+toc()
 
 # View output
 print(mod1)
 
+saveRDS(mod1,"13May2024model.RDS")
+
+shark.model <- glmmTMB(case_ ~ logsl_ + cos_ta_ + 
+                             st.depth + st.WT + st.distshore + 
+                             st.WT:st.distshore + st.depth:st.distshore + st.WT:st.depth + 
+                             st.WT:st.distshore:st.depth +
+                         logsl_:season+ cos_ta_:season + 
+                         st.depth:season + st.WT:season + st.distshore:season + 
+                         st.WT:st.distshore:season + st.depth:st.distshore:season + st.WT:st.depth:season + 
+                         st.WT:st.distshore:st.depth:season +
+                             (1|step_id) + 
+                             (0+ st.depth|id) + (0+ st.WT|id) + (0+ st.distshore|id) +
+                             (0+st.WT:st.distshore|id) + (0+st.depth:st.distshore|id) + (0 + st.WT:st.depth|id) +
+                             (0+st.WT:st.distshore:st.depth|id),
+                           REML = TRUE, family=poisson(), data = ssf_dataset)
+summary(shark.model)
+
 # View traceplots
-traceplot(mod1,pars=c("beta_temp","beta_depth","beta_dist","beta_temp_dist","beta_depth_dist","beta_temp_depth","beta_three","beta_sl","beta_ta","sigma"))
+traceplot(mod1,pars=c("beta_temp","beta_depth","beta_dist","beta_temp_dist","beta_depth_dist","beta_temp_depth","beta_three","beta_sl","beta_ta","sigma","pop_int"))
 traceplot(mod1,pars=c("a_re[1]"))
 
 # ---- GLMTMB (1) ----
